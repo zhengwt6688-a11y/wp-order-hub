@@ -1,0 +1,1 @@
+{"crons":[{"path":"/api/sync-orders","schedule":"*/10 * * * *"}],"functions":{"api/sync-orders.js":{"maxDuration":60}}}
