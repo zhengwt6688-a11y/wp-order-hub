@@ -82,8 +82,12 @@ export default async function handler(req, res) {
           break
         }
 
-        const orders = await r.json()
+        let orders = await r.json()
         if (!Array.isArray(orders) || orders.length === 0) break
+
+        // 过滤取消或支付失败的订单，只保留 processing / completed
+        orders = orders.filter(o => ['processing', 'completed'].includes(o.status))
+        if (orders.length === 0) break
 
         for (const o of orders) {
           const row = {
