@@ -7,16 +7,11 @@ import './style.css'
 const STATUS = ['待处理','处理中','缺货待处理','客户待回复','已发货','已退款','已取消','已完成','异常订单']
 
 function getPendingDays(order) {
-  if (!order || order.internal_status !== '待处理') return 0
-
-  const createdAt = new Date(order.created_at)
-  if (Number.isNaN(createdAt.getTime())) return 0
-
-  const now = new Date()
-  const diffMs = now - createdAt
-  const days = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-
-  return Math.max(days, 0)
+  if(order.internal_status === '已发货') return null;
+  const created = new Date(order.created_at);
+  const now = new Date();
+  const days = Math.floor((now - created)/ (1000*60*60*24));
+  return days;
 }
 
 function getPendingLabel(order) {
@@ -159,309 +154,205 @@ function Login(){
   )
 }
 
-function Orders({profile}){
-  const PAGE_SIZE = 50
+function Orders({profile}) {
+  const PAGE_SIZE = 50;
 
-  const [orders,setOrders]=useState([])
-  const [sites,setSites]=useState([])
-  const [employees,setEmployees]=useState([])
-  const [selected,setSelected]=useState(null)
-  const [msg,setMsg]=useState('')
-  const [total,setTotal]=useState(0)
-  const [pageNum,setPageNum]=useState(1)
+  const [orders, setOrders] = useState([]);
+  const [sites, setSites] = useState([]);
+  const [employees, setEmployees] = useState([]);
+  const [selected, setSelected] = useState(null);
+  const [msg, setMsg] = useState('');
+  const [total, setTotal] = useState(0);
+  const [pageNum, setPageNum] = useState(1);
 
-  const [f,setF]=useState({
-    q:'',
-    status:'',
-    site:'',
-    handler:'',
-    from:'',
-    to:''
-  })
+  const [f, setF] = useState({
+    q: '',
+    status: '',
+    site: '',
+    handler: '',
+    from: '',
+    to: ''
+  });
 
-  useEffect(()=>{
-    loadSites()
-    loadEmployees()
-  },[])
+  useEffect(() => {
+    loadSites();
+    loadEmployees();
+  }, []);
 
-  useEffect(()=>{
-    loadOrders()
-  },[pageNum])
+  useEffect(() => {
+    loadOrders();
+  }, [pageNum]);
 
-  async function loadSites(){
-    const {data}=await supabase
+  function getPendingDays(order) {
+    if(order.internal_status === '已发货') return null;
+    const created = new Date(order.created_at);
+    const now = new Date();
+    const days = Math.floor((now - created) / (1000*60*60*24));
+    return days;
+  }
+
+  function getPendingStyle(days){
+    return days >= 2 ? {color:'red', fontWeight:'bold'} : {};
+  }
+
+  async function loadSites() {
+    const { data } = await supabase
       .from('sites')
       .select('id,site_name')
-      .order('site_name')
+      .order('site_name');
 
-    setSites(data||[])
+    setSites(data || []);
   }
 
-  async function loadEmployees(){
-    const {data,error}=await supabase
+  async function loadEmployees() {
+    const { data, error } = await supabase
       .from('profiles')
       .select('id,name,email,role')
-      .order('name')
+      .order('name');
 
-    if(error){
-      console.error(error)
-      return
+    if(error) {
+      console.error(error);
+      return;
     }
 
-    setEmployees(data||[])
+    setEmployees(data || []);
   }
 
-  async function loadOrders(){
-    const fromIndex = (pageNum - 1) * PAGE_SIZE
-    const toIndex = fromIndex + PAGE_SIZE - 1
+  async function loadOrders() {
+    const fromIndex = (pageNum - 1) * PAGE_SIZE;
+    const toIndex = fromIndex + PAGE_SIZE - 1;
 
-    let q=supabase
+    let q = supabase
       .from('orders')
       .select('*,sites(site_name),profiles!orders_last_handled_by_fkey(name,email)', { count: 'exact' })
-      .order('created_at',{ascending:false})
-      .range(fromIndex,toIndex)
+      .order('created_at', { ascending: false })
+      .range(fromIndex, toIndex);
 
-    if(f.status) q=q.eq('internal_status',f.status)
-    if(f.site) q=q.eq('site_id',f.site)
-    if(f.handler) q=q.eq('last_handled_by',f.handler)
-    if(f.from) q=q.gte('created_at',f.from+'T00:00:00')
-    if(f.to) q=q.lte('created_at',f.to+'T23:59:59')
+    if(f.status) q = q.eq('internal_status', f.status);
+    if(f.site) q = q.eq('site_id', f.site);
+    if(f.handler) q = q.eq('last_handled_by', f.handler);
+    if(f.from) q = q.gte('created_at', f.from + 'T00:00:00');
+    if(f.to) q = q.lte('created_at', f.to + 'T23:59:59');
 
     if(f.q){
-      q=q.or(
+      q = q.or(
         `order_number.ilike.%${f.q}%,customer_name.ilike.%${f.q}%,customer_email.ilike.%${f.q}%,customer_phone.ilike.%${f.q}%`
-      )
+      );
     }
 
-    const {data,error,count}=await q
+    const { data, error, count } = await q;
 
-    if(error){
-      alert(error.message)
-      return
+    if(error) {
+      alert(error.message);
+      return;
     }
 
-    setOrders(data||[])
-    setTotal(count||0)
+    setOrders(data || []);
+    setTotal(count || 0);
   }
 
-  function applyFilters(){
-    setPageNum(1)
-    setTimeout(()=>loadOrders(),0)
+  async function sync() {
+    setMsg('正在同步...');
+    const r = await fetch('/api/sync-orders');
+    const j = await r.json().catch(()=>({}));
+
+    setMsg(j.ok ? `同步完成：新增/更新 ${j.upserted || 0} 个订单` : (j.error || '同步失败'));
+    setPageNum(1);
+    loadOrders();
   }
 
-  function resetFilters(){
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  function applyFilters() {
+    setPageNum(1);
+    setTimeout(() => loadOrders(), 0);
+  }
+
+  function resetFilters() {
     setF({
-      q:'',
-      status:'',
-      site:'',
-      handler:'',
-      from:'',
-      to:''
-    })
-    setPageNum(1)
-    setTimeout(()=>loadOrders(),0)
+      q: '',
+      status: '',
+      site: '',
+      handler: '',
+      from: '',
+      to: ''
+    });
+    setPageNum(1);
+    setTimeout(() => loadOrders(), 0);
   }
-
-  async function sync(){
-    setMsg('正在同步...')
-
-    const r=await fetch('/api/sync-orders')
-    const j=await r.json().catch(()=>({}))
-
-    setMsg(j.ok ? `同步完成：新增/更新 ${j.upserted||0} 个订单` : (j.error || '同步失败'))
-    setPageNum(1)
-    loadOrders()
-  }
-
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   return (
     <section>
       <div className="top">
         <h1>订单列表</h1>
-        <button onClick={sync}>
-          <RefreshCcw size={16}/>同步订单
-        </button>
+        <button onClick={sync}>同步订单</button>
       </div>
 
       {msg && <p className="notice">{msg}</p>}
 
       <div className="filters card">
-        <div className="search">
-          <Search size={16}/>
-          <input
-            placeholder="订单号/客户/邮箱/电话"
-            value={f.q}
-            onChange={e=>setF({...f,q:e.target.value})}
-          />
-        </div>
-
+        <input placeholder="订单号/客户/邮箱/电话" value={f.q} onChange={e=>setF({...f,q:e.target.value})}/>
         <select value={f.site} onChange={e=>setF({...f,site:e.target.value})}>
           <option value="">全部网站</option>
-          {sites.map(s=>(
-            <option key={s.id} value={s.id}>{s.site_name}</option>
-          ))}
+          {sites.map(s=><option key={s.id} value={s.id}>{s.site_name}</option>)}
         </select>
-
         <select value={f.status} onChange={e=>setF({...f,status:e.target.value})}>
           <option value="">全部状态</option>
-          {STATUS.map(s=>(
-            <option key={s}>{s}</option>
-          ))}
+          {STATUS.map(s=><option key={s}>{s}</option>)}
         </select>
-
         <select value={f.handler} onChange={e=>setF({...f,handler:e.target.value})}>
           <option value="">全部员工</option>
-          {employees.map(u=>(
-            <option key={u.id} value={u.id}>
-              {u.name || u.email}
-            </option>
-          ))}
+          {employees.map(u=><option key={u.id} value={u.id}>{u.name||u.email}</option>)}
         </select>
-
-        <input
-          type="date"
-          value={f.from}
-          onChange={e=>setF({...f,from:e.target.value})}
-        />
-
-        <input
-          type="date"
-          value={f.to}
-          onChange={e=>setF({...f,to:e.target.value})}
-        />
-
-        <button className="primary" onClick={applyFilters}>筛选</button>
+        <input type="date" value={f.from} onChange={e=>setF({...f,from:e.target.value})}/>
+        <input type="date" value={f.to} onChange={e=>setF({...f,to:e.target.value})}/>
+        <button onClick={applyFilters}>筛选</button>
         <button onClick={resetFilters}>重置</button>
       </div>
 
-      <div className="card" style={{marginBottom:'12px'}}>
-        <div style={{
-          display:'flex',
-          justifyContent:'space-between',
-          alignItems:'center',
-          gap:'12px',
-          flexWrap:'wrap'
-        }}>
-          <div>
-            共 <b>{total}</b> 个订单，
-            当前第 <b>{pageNum}</b> / <b>{totalPages}</b> 页，
-            每页 <b>{PAGE_SIZE}</b> 条
-          </div>
+      <p>共 {total} 个订单，当前第 {pageNum}/{totalPages} 页，每页 {PAGE_SIZE} 条</p>
 
-          <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
-            <button
-              disabled={pageNum<=1}
-              onClick={()=>setPageNum(pageNum-1)}
-            >
-              上一页
-            </button>
-
-            <button
-              disabled={pageNum>=totalPages}
-              onClick={()=>setPageNum(pageNum+1)}
-            >
-              下一页
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className="card table">
-        <table>
-          <thead>
-            <tr>
-              <th>网站</th>
-              <th>订单</th>
-              <th>客户</th>
-              <th>金额</th>
-              <th>Woo状态</th>
-              <th>内部状态</th>
-              <th>Pending</th>
-              <th>最后处理</th>
-              <th>日期</th>
+      <table className="card table">
+        <thead>
+          <tr>
+            <th>网站</th><th>订单</th><th>客户</th><th>金额</th><th>Woo状态</th>
+            <th>内部状态</th><th>Pending</th><th>最后处理</th><th>日期</th>
+          </tr>
+        </thead>
+        <tbody>
+          {orders.map(o=>(
+            <tr key={o.id}>
+              <td>{o.sites?.site_name}</td>
+              <td>#{o.order_number}</td>
+              <td>{o.customer_name}<br/><span>{o.customer_phone}</span></td>
+              <td>{o.currency} {o.total_amount}</td>
+              <td>{o.wc_status}</td>
+              <td style={o.internal_status==='待处理'?{color:'red',fontWeight:'bold'}:{}}>{o.internal_status}</td>
+              <td>
+                {getPendingDays(o) != null && (
+                  <span style={getPendingStyle(getPendingDays(o))}>
+                    pending {getPendingDays(o)} 天
+                  </span>
+                )}
+              </td>
+              <td>{o.profiles?.name||o.profiles?.email||'-'}</td>
+              <td>{new Date(o.created_at).toLocaleString()}</td>
             </tr>
-          </thead>
+          ))}
+          {orders.length===0 && (
+            <tr>
+              <td colSpan="9" style={{textAlign:'center',padding:'24px'}}>
+                暂无订单
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
 
-          <tbody>
-            {orders.map(o=>(
-              <tr key={o.id} onClick={()=>setSelected(o)}>
-                <td>{o.sites?.site_name}</td>
-                <td>#{o.order_number}</td>
-                <td>
-                  {o.customer_name}
-                  <br/>
-                  <span>{o.customer_phone}</span>
-                </td>
-                <td>{o.currency} {o.total_amount}</td>
-                <td>{o.wc_status}</td>
-                <td><b>{o.internal_status}</b></td>
-                <td>
-                  {getPendingLabel(o) ? (
-                    <span style={getPendingStyle(o)}>
-                      {getPendingLabel(o)}
-                    </span>
-                  ) : (
-                    '-'
-                  )}
-                </td>
-                <td>{o.profiles?.name || o.profiles?.email || '-'}</td>
-                <td>{new Date(o.created_at).toLocaleString()}</td>
-              </tr>
-            ))}
-
-            {orders.length===0 && (
-              <tr>
-                <td colSpan="9" style={{textAlign:'center',padding:'24px'}}>
-                  暂无订单
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+      <div style={{display:'flex',gap:'8px'}}>
+        <button disabled={pageNum<=1} onClick={()=>setPageNum(pageNum-1)}>上一页</button>
+        <button disabled={pageNum>=totalPages} onClick={()=>setPageNum(pageNum+1)}>下一页</button>
       </div>
-
-      <div className="card" style={{marginTop:'12px'}}>
-        <div style={{
-          display:'flex',
-          justifyContent:'space-between',
-          alignItems:'center',
-          gap:'12px',
-          flexWrap:'wrap'
-        }}>
-          <div>
-            共 <b>{total}</b> 个订单，
-            当前第 <b>{pageNum}</b> / <b>{totalPages}</b> 页
-          </div>
-
-          <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
-            <button
-              disabled={pageNum<=1}
-              onClick={()=>setPageNum(pageNum-1)}
-            >
-              上一页
-            </button>
-
-            <button
-              disabled={pageNum>=totalPages}
-              onClick={()=>setPageNum(pageNum+1)}
-            >
-              下一页
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {selected && (
-        <OrderModal
-          order={selected}
-          close={()=>{
-            setSelected(null)
-            loadOrders()
-          }}
-          statusList={STATUS}
-        />
-      )}
     </section>
   )
 }
