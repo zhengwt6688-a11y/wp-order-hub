@@ -397,7 +397,11 @@ function Orders({profile}){
                 </td>
                 <td>{o.currency} {o.total_amount}</td>
                 <td>{o.wc_status}</td>
-                <td><b>{o.internal_status}</b></td>
+                <td>
+                  <b style={o.internal_status === '待处理' ? { color: '#dc2626' } : {}}>
+                    {o.internal_status}
+                  </b>
+                </td>
                 <td>
                   {getPendingLabel(o) ? (
                     <span style={getPendingStyle(o)}>
