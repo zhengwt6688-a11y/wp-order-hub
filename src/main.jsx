@@ -506,30 +506,32 @@ function OrderModal({order,close,statusList}){
   async function save(){
     const {data:{user}}=await supabase.auth.getUser()
 
-    if(status!==order.internal_status){
-      const ownerPayload = {
-        last_handled_at: new Date().toISOString()
-      }
-      
-      if (!order.last_handled_by) {
-        ownerPayload.last_handled_by = user.id
-      }
-      
-      await supabase
-        .from('orders')
-        .update(ownerPayload)
-        .eq('id', order.id)
+if(status!==order.internal_status){
+  const updatePayload = {
+    internal_status: status,
+    last_handled_at: new Date().toISOString()
+  }
 
-      await supabase
-        .from('operation_logs')
-        .insert({
-          order_id:order.id,
-          user_id:user.id,
-          action:'修改状态',
-          old_value:order.internal_status,
-          new_value:status
-        })
-    }
+  // 只有第一次操作才设置负责人，后续不覆盖
+  if (!order.last_handled_by) {
+    updatePayload.last_handled_by = user.id
+  }
+
+  await supabase
+    .from('orders')
+    .update(updatePayload)
+    .eq('id', order.id)
+
+  await supabase
+    .from('operation_logs')
+    .insert({
+      order_id:order.id,
+      user_id:user.id,
+      action:'修改状态',
+      old_value:order.internal_status,
+      new_value:status
+    })
+}
 
     if(note.trim()){
       await supabase
