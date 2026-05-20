@@ -7,22 +7,32 @@ import './style.css'
 const STATUS = ['待处理','处理中','缺货待处理','客户待回复','已发货','已退款','已取消','已完成','异常订单']
 
 function getPendingDays(order) {
-  if (!order || order.internal_status !== '待处理') return 0
+  if (
+    !order ||
+    !['待处理','处理中','缺货待处理','客户待回复'].includes(order.internal_status)
+  ) {
+    return 0
+  }
 
   const createdAt = new Date(order.created_at)
+
   if (Number.isNaN(createdAt.getTime())) return 0
 
   const now = new Date()
   const diffMs = now - createdAt
-  const days = Math.floor(diffMs / (1000 * 60 * 60 * 24))
 
-  return Math.max(days, 0)
+  return Math.floor(diffMs / (1000 * 60 * 60 * 24))
 }
 
 function getPendingLabel(order) {
   const days = getPendingDays(order)
 
-  if (order.internal_status !== '待处理') return ''
+  if (
+    !['待处理','处理中','缺货待处理','客户待回复'].includes(order.internal_status)
+  ) {
+    return ''
+  }
+
   if (days >= 2) return `⚠ Pending ${days}天`
   if (days === 1) return `Pending 1天`
   return ''
@@ -42,18 +52,10 @@ function getPendingStyle(order) {
     }
   }
 
-  if (days === 1) {
-    return {
-      color: '#b45309',
-      fontWeight: 700,
-      background: '#fef3c7',
-      padding: '4px 8px',
-      borderRadius: '999px',
-      display: 'inline-block',
-    }
+  return {
+    color: '#374151',
+    fontWeight: 600,
   }
-
-  return {}
 }
 
 function App(){
@@ -378,7 +380,7 @@ function Orders({profile}){
               <th>Woo状态</th>
               <th>内部状态</th>
               <th>Pending</th>
-              <th>最后处理</th>
+              <th>负责人</th>
               <th>日期</th>
             </tr>
           </thead>
@@ -405,7 +407,11 @@ function Orders({profile}){
                     '-'
                   )}
                 </td>
-                <td>{o.profiles?.name || o.profiles?.email || '-'}</td>
+                <td>
+                  {o.profiles?.name ||
+                   o.profiles?.email ||
+                   '-'}
+                </td>
                 <td>{new Date(o.created_at).toLocaleString()}</td>
               </tr>
             ))}
@@ -497,14 +503,20 @@ function OrderModal({order,close,statusList}){
     const {data:{user}}=await supabase.auth.getUser()
 
     if(status!==order.internal_status){
+      const updatePayload = {
+        internal_status: status,
+        last_handled_at: new Date().toISOString()
+      }
+      
+      // 只有第一次处理才设置负责人
+      if (!order.last_handled_by) {
+        updatePayload.last_handled_by = user.id
+      }
+      
       await supabase
         .from('orders')
-        .update({
-          internal_status:status,
-          last_handled_by:user.id,
-          last_handled_at:new Date().toISOString()
-        })
-        .eq('id',order.id)
+        .update(updatePayload)
+        .eq('id', order.id)
 
       await supabase
         .from('operation_logs')
