@@ -174,6 +174,20 @@ function Orders({profile}) {
     to: ''
   });
 
+  const PENDING_STATUSES = ['待处理','处理中','缺货待处理','客户待回复'];
+
+  function getPendingDays(order) {
+    if(!PENDING_STATUSES.includes(order.internal_status)) return null;
+    const created = new Date(order.created_at);
+    const now = new Date();
+    const days = Math.floor((now - created)/(1000*60*60*24));
+    return days;
+  }
+
+  function getPendingStyle(days){
+    return days >= 2 ? {color:'red', fontWeight:'bold'} : {};
+  }
+
   useEffect(() => {
     loadSites();
     loadEmployees();
@@ -182,18 +196,6 @@ function Orders({profile}) {
   useEffect(() => {
     loadOrders();
   }, [pageNum]);
-
-  function getPendingDays(order) {
-    if(order.internal_status === '已发货') return null;
-    const created = new Date(order.created_at);
-    const now = new Date();
-    const days = Math.floor((now - created) / (1000*60*60*24));
-    return days;
-  }
-
-  function getPendingStyle(days){
-    return days >= 2 ? {color:'red', fontWeight:'bold'} : {};
-  }
 
   async function loadSites() {
     const { data } = await supabase
@@ -298,7 +300,7 @@ function Orders({profile}) {
         </select>
         <select value={f.status} onChange={e=>setF({...f,status:e.target.value})}>
           <option value="">全部状态</option>
-          {STATUS.map(s=><option key={s}>{s}</option>)}
+          {PENDING_STATUSES.map(s=><option key={s}>{s}</option>)}
         </select>
         <select value={f.handler} onChange={e=>setF({...f,handler:e.target.value})}>
           <option value="">全部员工</option>
@@ -327,7 +329,7 @@ function Orders({profile}) {
               <td>{o.customer_name}<br/><span>{o.customer_phone}</span></td>
               <td>{o.currency} {o.total_amount}</td>
               <td>{o.wc_status}</td>
-              <td style={o.internal_status==='待处理'?{color:'red',fontWeight:'bold'}:{}}>{o.internal_status}</td>
+              <td style={PENDING_STATUSES.includes(o.internal_status)?{color:'red',fontWeight:'bold'}:{}}>{o.internal_status}</td>
               <td>
                 {getPendingDays(o) != null && (
                   <span style={getPendingStyle(getPendingDays(o))}>
