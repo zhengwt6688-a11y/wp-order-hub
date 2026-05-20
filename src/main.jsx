@@ -507,19 +507,17 @@ function OrderModal({order,close,statusList}){
     const {data:{user}}=await supabase.auth.getUser()
 
     if(status!==order.internal_status){
-      const updatePayload = {
-        internal_status: status,
+      const ownerPayload = {
         last_handled_at: new Date().toISOString()
       }
       
-      // 只有第一次处理才设置负责人
       if (!order.last_handled_by) {
-        updatePayload.last_handled_by = user.id
+        ownerPayload.last_handled_by = user.id
       }
       
       await supabase
         .from('orders')
-        .update(updatePayload)
+        .update(ownerPayload)
         .eq('id', order.id)
 
       await supabase
