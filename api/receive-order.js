@@ -55,7 +55,53 @@ function address(a = {}, s = {}) {
   )
 }
 
+function normalizeHost(value) {
+  try {
+    return new URL(
+      String(value || '').trim()
+    )
+      .hostname
+      .toLowerCase()
+      .replace(/^www\./, '')
+  } catch {
+    return ''
+  }
+}
+
+function normalizeOrderDate(o) {
+  if (o?.date_created_gmt) {
+    const value = String(
+      o.date_created_gmt
+    ).trim()
+
+    const date = new Date(
+      value.endsWith('Z')
+        ? value
+        : `${value}Z`
+    )
+
+    if (!Number.isNaN(date.getTime())) {
+      return date.toISOString()
+    }
+  }
+
+  if (o?.date_created) {
+    const date = new Date(
+      o.date_created
+    )
+
+    if (!Number.isNaN(date.getTime())) {
+      return date.toISOString()
+    }
+  }
+
+  return new Date().toISOString()
+}
+
 export default async function handler(req, res) {
+  /*
+   * Only WordPress should POST here.
+   */
   if (req.method !== 'POST') {
     return res.status(405).json({
       ok: false,
@@ -64,8 +110,15 @@ export default async function handler(req, res) {
   }
 
   try {
+    /*
+     * =====================================================
+     * 1. Verify Push Secret
+     * =====================================================
+     */
     const providedSecret =
-      req.headers['x-order-push-secret']
+      req.headers[
+        'x-order-push-secret'
+      ]
 
     if (
       !providedSecret ||
@@ -77,16 +130,21 @@ export default async function handler(req, res) {
       })
     }
 
-    const payload = req.body
+    /*
+     * =====================================================
+     * 2. Validate payload
+     * =====================================================
+     */
+    const payload = req.body || {}
 
-    if (!payload?.site_url) {
+    if (!payload.site_url) {
       return res.status(400).json({
         ok: false,
         error: 'Missing site_url',
       })
     }
 
-    if (!payload?.order?.id) {
+    if (!payload.order?.id) {
       return res.status(400).json({
         ok: false,
         error: 'Missing order',
@@ -95,64 +153,116 @@ export default async function handler(req, res) {
 
     const o = payload.order
 
-    const cleanUrl = String(
-      payload.site_url
-    ).replace(/\/+$/, '')
+    /*
+     * =====================================================
+     * 3. Match WordPress site to Supabase site
+     *
+     * Important:
+     * Match hostname instead of full URL.
+     *
+     * These will all match:
+     *
+     * https://notablevapea.com
+     * https://notablevapea.com/
+     * https://www.notablevapea.com
+     * =====================================================
+     */
+    const incomingHost =
+      normalizeHost(
+        payload.site_url
+      )
+
+    if (!incomingHost) {
+      return res.status(400).json({
+        ok: false,
+        error:
+          `Invalid site_url: ${payload.site_url}`,
+      })
+    }
 
     const {
       data: sites,
       error: siteError,
     } = await supabase
       .from('sites')
-      .select('*')
+      .select(
+        'id,site_name,site_url,enabled'
+      )
       .eq('enabled', true)
 
     if (siteError) {
       throw siteError
     }
 
-    const site = (sites || []).find(s => {
-      const dbUrl = String(
-        s.site_url || ''
-      ).replace(/\/+$/, '')
+    const site =
+      (sites || []).find(s => {
+        const dbHost =
+          normalizeHost(
+            s.site_url
+          )
 
-      return dbUrl === cleanUrl
-    })
+        return (
+          dbHost &&
+          dbHost === incomingHost
+        )
+      })
 
     if (!site) {
       return res.status(404).json({
         ok: false,
-        error: `Site not found: ${cleanUrl}`,
+        error:
+          `Site not found: ${payload.site_url}`,
+        incoming_host:
+          incomingHost,
       })
     }
 
     /*
-     * 只导入 processing / completed
+     * =====================================================
+     * 4. Only import valid WooCommerce statuses
+     * =====================================================
      */
+    const validStatuses = [
+      'processing',
+      'completed',
+    ]
+
     if (
-      !['processing', 'completed'].includes(
+      !validStatuses.includes(
         o.status
       )
     ) {
       return res.status(200).json({
         ok: true,
         skipped: true,
-        reason: `invalid_status:${o.status}`,
-        order_id: o.id,
+        reason:
+          `invalid_status:${o.status}`,
+        order_id:
+          o.id,
+        site:
+          site.site_name,
       })
     }
 
     /*
-     * 最关键：
-     * 已存在就直接跳过
+     * =====================================================
+     * 5. Check whether order already exists
+     *
+     * Existing orders are NEVER rewritten here.
+     * =====================================================
      */
     const {
       data: existing,
       error: existingError,
     } = await supabase
       .from('orders')
-      .select('id')
-      .eq('site_id', site.id)
+      .select(
+        'id,internal_status,last_handled_by,last_handled_at'
+      )
+      .eq(
+        'site_id',
+        site.id
+      )
       .eq(
         'wc_order_id',
         String(o.id)
@@ -167,12 +277,22 @@ export default async function handler(req, res) {
       return res.status(200).json({
         ok: true,
         skipped: true,
-        reason: 'already_exists',
-        order_id: o.id,
-        database_id: existing.id,
+        reason:
+          'already_exists',
+        order_id:
+          o.id,
+        database_id:
+          existing.id,
+        site:
+          site.site_name,
       })
     }
 
+    /*
+     * =====================================================
+     * 6. Build new order row
+     * =====================================================
+     */
     const row = {
       site_id:
         site.id,
@@ -181,7 +301,9 @@ export default async function handler(req, res) {
         String(o.id),
 
       order_number:
-        String(o.number || o.id),
+        String(
+          o.number || o.id
+        ),
 
       customer_name:
         [
@@ -223,23 +345,21 @@ export default async function handler(req, res) {
         '待处理',
 
       created_at:
-        o.date_created_gmt
-          ? new Date(
-              `${o.date_created_gmt}Z`
-            ).toISOString()
-          : o.date_created
-            ? new Date(
-                o.date_created
-              ).toISOString()
-            : new Date().toISOString(),
+        normalizeOrderDate(o),
 
       synced_at:
-        new Date().toISOString(),
+        new Date()
+          .toISOString(),
 
       raw:
         o,
     }
 
+    /*
+     * =====================================================
+     * 7. Insert order
+     * =====================================================
+     */
     const {
       data: orderRow,
       error: orderError,
@@ -250,26 +370,71 @@ export default async function handler(req, res) {
       .single()
 
     if (orderError) {
+      /*
+       * Extra protection in case two pushes arrive
+       * almost at the same time.
+       */
+      if (
+        orderError.code ===
+        '23505'
+      ) {
+        const {
+          data: duplicate,
+        } = await supabase
+          .from('orders')
+          .select('id')
+          .eq(
+            'site_id',
+            site.id
+          )
+          .eq(
+            'wc_order_id',
+            String(o.id)
+          )
+          .maybeSingle()
+
+        return res.status(200).json({
+          ok: true,
+          skipped: true,
+          reason:
+            'already_exists',
+          order_id:
+            o.id,
+          database_id:
+            duplicate?.id || null,
+          site:
+            site.site_name,
+        })
+      }
+
       throw orderError
     }
 
+    /*
+     * =====================================================
+     * 8. Insert order items
+     * =====================================================
+     */
     const items =
-      (o.line_items || []).map(i => ({
-        order_id:
-          orderRow.id,
+      (o.line_items || [])
+        .map(i => ({
+          order_id:
+            orderRow.id,
 
-        product_name:
-          i.name || '',
+          product_name:
+            i.name || '',
 
-        sku:
-          i.sku || '',
+          sku:
+            i.sku || '',
 
-        quantity:
-          Number(i.quantity || 0),
+          quantity:
+            Number(
+              i.quantity || 0
+            ),
 
-        price:
-          money(i.total),
-      }))
+          price:
+            money(i.total),
+        }))
 
     if (items.length) {
       const {
@@ -279,15 +444,42 @@ export default async function handler(req, res) {
         .insert(items)
 
       if (itemError) {
+        /*
+         * Order was already inserted.
+         * Return error so we can see that items failed.
+         */
         throw itemError
       }
     }
 
+    /*
+     * =====================================================
+     * 9. Success
+     * =====================================================
+     */
     return res.status(200).json({
       ok: true,
       inserted: true,
-      order_id: o.id,
-      database_id: orderRow.id,
+
+      site:
+        site.site_name,
+
+      site_id:
+        site.id,
+
+      incoming_host:
+        incomingHost,
+
+      order_id:
+        o.id,
+
+      order_number:
+        String(
+          o.number || o.id
+        ),
+
+      database_id:
+        orderRow.id,
     })
 
   } catch (error) {
