@@ -313,7 +313,17 @@ export default async function handler(req, res) {
 		const results = []
 
 		for (const site of sites || []) {
-
+			// Notablevape 使用 WordPress 插件自动推送
+			// 旧同步接口跳过该网站
+			if (String(site.id) === '951ec479-31e8-4cad-ab96-bb9b9a6f006f') {
+			  results.push({
+			    site: site.site_name,
+			    ok: true,
+			    skipped: true,
+			    reason: 'WordPress Connector push enabled; legacy pull disabled',
+			  })
+			  continue
+			}
 			/*
 			 * 每个网站单独 try/catch。
 			 * 一个网站报错，不影响其他网站继续同步。
