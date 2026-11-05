@@ -287,7 +287,32 @@ export default async function handler(req, res) {
           site.site_name,
       })
     }
-
+	
+	const NOTABLEVAPE_SITE_ID = '951ec479-31e8-4cad-ab96-bb9b9a6f006f'
+	
+	if (String(site.id) === NOTABLEVAPE_SITE_ID) {
+	  const orderNumber = String(o.number || o.id)
+	
+	  const { data: duplicate, error } = await supabase
+	    .from('orders')
+	    .select('id')
+	    .eq('site_id', site.id)
+	    .eq('order_number', orderNumber)
+	    .maybeSingle()
+	
+	  if (error) throw error
+	
+	  if (duplicate) {
+	    return res.status(200).json({
+	      ok: true,
+	      skipped: true,
+	      reason: 'already_exists_order_number',
+	      order_id: o.id,
+	      database_id: duplicate.id,
+	    })
+	  }
+	}
+	
     /*
      * =====================================================
      * 6. Build new order row
